@@ -1,19 +1,29 @@
-import { ItemStatus } from "../api";
+import { cn } from "../lib/utils";
 
-// Maps each item status to the spec's color language:
-// green = clean/done, amber = flagged (needs a glance), red = error.
-const MAP: Record<ItemStatus, { color: string; label: string }> = {
-  clean: { color: "green", label: "Clean" },
-  synced: { color: "green", label: "Synced" },
-  fixed: { color: "green", label: "Fixed" },
-  approved: { color: "green", label: "Approved" },
-  "flagged-suspicious": { color: "amber", label: "Flagged" },
-  "flagged-hard": { color: "red", label: "Error" },
-  failed: { color: "red", label: "Failed" },
-  skipped: { color: "gray", label: "Skipped" },
+const config: Record<string, { label: string; className: string }> = {
+  Synced: { label: "Synced", className: "bg-emerald-100 text-emerald-700 border border-emerald-200" },
+  Pending: { label: "Pending", className: "bg-slate-100 text-slate-600 border border-slate-200" },
+  Flagged: { label: "Flagged", className: "bg-amber-100 text-amber-700 border border-amber-200" },
+  Error: { label: "Error", className: "bg-red-100 text-red-700 border border-red-200" },
+  INFO: { label: "INFO", className: "bg-slate-100 text-slate-600 border border-slate-200" },
+  WARNING: { label: "WARNING", className: "bg-amber-100 text-amber-700 border border-amber-200" },
+  ERROR: { label: "ERROR", className: "bg-red-100 text-red-700 border border-red-200" },
 };
 
-export function StatusBadge({ status }: { status: ItemStatus }) {
-  const { color, label } = MAP[status] ?? { color: "gray", label: status };
-  return <span className={`badge ${color}`}>{label}</span>;
+export function StatusBadge({ status, className }: { status: string; className?: string }) {
+  const c = config[status] ?? {
+    label: status,
+    className: "bg-slate-100 text-slate-600 border border-slate-200",
+  };
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold",
+        c.className,
+        className,
+      )}
+    >
+      {c.label}
+    </span>
+  );
 }
