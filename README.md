@@ -18,8 +18,8 @@ to a destination inventory app (Zoho first; any app later).
 ## Architecture
 
 ```
-frontend (React + Vite + TS)
-        │  REST + bearer token
+frontend  SyncOps UI (React + Vite + TS, Tailwind, wouter, framer-motion)
+        │  REST + bearer token  (dev: Vite proxies /api → :8000)
         ▼
 backend (FastAPI)
   ├── engine/      pure logic: readers → match → combine → quality gate
@@ -31,6 +31,12 @@ backend (FastAPI)
 
 The **engine** has zero web/DB/vendor dependencies, so the core logic is fully
 unit-tested in isolation (`backend/tests/test_engine.py`).
+
+The SyncOps frontend talks to the FastAPI engine over REST. The New Sync wizard
+runs a **real** preview (`/runs/preview`), review actions (`fix`/`approve`/`skip`),
+and `commit`; the Dashboard and History read real runs. A demo session is
+auto-provisioned so the UI stays login-free in dev. (The **Logs** page is still
+static sample data — there's no log-stream endpoint yet.)
 
 ## Running locally
 
@@ -53,8 +59,7 @@ npm install
 npm run dev                           # http://localhost:5173
 ```
 
-The dev server proxies `/auth`, `/runs`, `/connections`, `/settings` to the
-backend on :8000.
+Start the backend first — the dev server proxies `/api/*` to it on :8000.
 
 ### Tests
 

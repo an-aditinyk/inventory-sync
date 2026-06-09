@@ -62,7 +62,10 @@ class RunSummaryResponse(BaseModel):
 
 class RunResponse(BaseModel):
     id: int
-    status: str
+    run_id: str          # human-facing label, e.g. "SYNC-12"
+    file_name: Optional[str]
+    status: str          # raw lifecycle: preview / committed / failed
+    display_status: str  # UI label: Preview / Completed / Partial / Failed
     ran_at: str
     summary: RunSummaryResponse
     items: list[RunItemResponse] = []
@@ -110,12 +113,25 @@ def _summary(session: Session, run: SyncRun) -> RunSummaryResponse:
     )
 
 
+def _display_status(run: SyncRun, summary: RunSummaryResponse) -> str:
+    if run.status == RunStatus.PREVIEW:
+        return "Preview"
+    if run.status == RunStatus.FAILED:
+        return "Failed"
+    # committed
+    return "Partial" if (summary.failed > 0 or summary.flagged > 0) else "Completed"
+
+
 def _run_response(session: Session, run: SyncRun, *, with_items: bool = True) -> RunResponse:
+    summary = _summary(session, run)
     resp = RunResponse(
         id=run.id,
+        run_id=f"SYNC-{run.id}",
+        file_name=run.file_name,
         status=run.status.value,
+        display_status=_display_status(run, summary),
         ran_at=run.ran_at.isoformat(),
-        summary=_summary(session, run),
+        summary=summary,
     )
     if with_items:
         items = session.exec(
@@ -189,7 +205,11 @@ async def create_preview(
         last_sync_quantities=last_sync_map(session, user.id),
     )
 
-    run = SyncRun(owner_id=user.id, status=RunStatus.PREVIEW)
+    run = SyncRun(
+        owner_id=user.id,
+        status=RunStatus.PREVIEW,
+        file_name=excel.filename or "upload.xlsx",
+    )
     session.add(run)
     session.commit()
     session.refresh(run)

@@ -6,7 +6,11 @@ import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "./components/ui/toaster";
 import { App } from "./App";
+import { ensureSession } from "./lib/api";
 import "./index.css";
+
+// Provision a demo session up front so the first API calls are authenticated.
+ensureSession().catch(() => {});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -74,6 +74,7 @@ class SyncRun(SQLModel, table=True):
     owner_id: int = Field(foreign_key="users.id", index=True)
     destination_id: Optional[int] = Field(default=None, foreign_key="connections.id")
     ran_at: datetime = Field(default_factory=utcnow)
+    file_name: Optional[str] = None
     status: RunStatus = RunStatus.PREVIEW
     # Summary counts for history without re-aggregating run_items.
     count_clean: int = 0

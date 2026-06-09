@@ -19,6 +19,8 @@ import { Layout } from "../components/Layout";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { useToast } from "../hooks/use-toast";
+import { api, type Run, type RunItem, type ItemStatus } from "../lib/api";
 
 const steps = [
   { id: 1, label: "Upload Excel", icon: Upload },
@@ -28,85 +30,123 @@ const steps = [
   { id: 5, label: "Commit Sync", icon: Zap },
 ];
 
-interface PreviewItem {
-  sku: string;
-  productName: string;
-  quantity: number;
-  shopifyQty: number;
-  status: "Clean" | "Flagged" | "Error";
-  issue?: string;
-  fixed?: boolean;
+// Sample online (Shopify) stock used until a live OAuth pull is wired.
+const SAMPLE_SHOPIFY = [
+  { sku: "MUG-001", title: "Blue Mug", inventory_quantity: 50 },
+  { sku: "PEN-002", title: "Gel Pen", inventory_quantity: 12 },
+  { sku: "BOX-003", title: "Storage Box", inventory_quantity: 8 },
+];
+
+function statusLabel(s: ItemStatus): { text: string; cls: string } {
+  switch (s) {
+    case "clean":
+      return { text: "Clean", cls: "bg-emerald-100 text-emerald-700" };
+    case "flagged-suspicious":
+      return { text: "Flagged", cls: "bg-amber-100 text-amber-700" };
+    case "flagged-hard":
+      return { text: "Error", cls: "bg-red-100 text-red-700" };
+    case "fixed":
+      return { text: "Fixed", cls: "bg-emerald-100 text-emerald-700" };
+    case "approved":
+      return { text: "Approved", cls: "bg-emerald-100 text-emerald-700" };
+    case "skipped":
+      return { text: "Skipped", cls: "bg-slate-100 text-slate-600" };
+    case "synced":
+      return { text: "Synced", cls: "bg-emerald-100 text-emerald-700" };
+    case "failed":
+      return { text: "Failed", cls: "bg-red-100 text-red-700" };
+  }
 }
 
-const INITIAL_ITEMS: PreviewItem[] = [
-  { sku: "SKU-001", productName: "Blue Denim Jacket", quantity: 120, shopifyQty: 120, status: "Clean" },
-  { sku: "SKU-002", productName: "Classic White Tee", quantity: 500, shopifyQty: 500, status: "Clean" },
-  { sku: "SKU-003", productName: "Running Sneakers", quantity: 45, shopifyQty: 45, status: "Clean" },
-  { sku: "SKU-005", productName: "Aviator Sunglasses", quantity: 30, shopifyQty: 85, status: "Flagged", issue: "Qty diff > 50 units" },
-  { sku: "SKU-007", productName: "Wool Beanie", quantity: -5, shopifyQty: 10, status: "Error", issue: "Negative stock value" },
-  { sku: "SKU-008", productName: "Silver Watch", quantity: 150, shopifyQty: 150, status: "Clean" },
-  { sku: "SKU-009", productName: "Cotton Socks (3-Pack)", quantity: 320, shopifyQty: 320, status: "Clean" },
-  { sku: "SKU-010", productName: "Puffer Jacket", quantity: 80, shopifyQty: 80, status: "Clean" },
-  { sku: "SKU-012", productName: "V-Neck Sweater", quantity: 200, shopifyQty: 200, status: "Clean" },
-  { sku: "SKU-013", productName: "Chino Pants", quantity: 110, shopifyQty: 110, status: "Clean" },
-];
+const isFlagged = (s: ItemStatus) => s === "flagged-hard" || s === "flagged-suspicious";
 
 export function NewSync() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const [step, setStep] = useState(1);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [fetchingShopify, setFetchingShopify] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
   const [shopifyFetched, setShopifyFetched] = useState(false);
+  const [fetchingShopify, setFetchingShopify] = useState(false);
   const [runningPreview, setRunningPreview] = useState(false);
-  const [previewDone, setPreviewDone] = useState(false);
-  const [items, setItems] = useState<PreviewItem[]>(INITIAL_ITEMS);
-  const [syncing, setSyncing] = useState(false);
-  const [syncDone, setSyncDone] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [run, setRun] = useState<Run | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const cleanCount = items.filter((i) => i.status === "Clean").length;
-  const flaggedCount = items.filter((i) => i.status === "Flagged" && !i.fixed).length;
-  const errorCount = items.filter((i) => i.status === "Error" && !i.fixed).length;
+  const items = run?.items ?? [];
+  const cleanCount = items.filter((i) => i.status === "clean").length;
+  const flaggedCount = items.filter((i) => i.status === "flagged-suspicious").length;
+  const errorCount = items.filter((i) => i.status === "flagged-hard").length;
+  const unresolvedFlags = items.filter((i) => isFlagged(i.status));
 
   function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
-    if (f) setFileName(f.name);
+    if (f) setFile(f);
   }
+
   function fetchShopify() {
     setFetchingShopify(true);
     setTimeout(() => {
       setFetchingShopify(false);
       setShopifyFetched(true);
-    }, 2000);
+    }, 1200);
   }
-  function runPreview() {
+
+  async function runPreview() {
+    if (!file) return;
     setRunningPreview(true);
-    setTimeout(() => {
+    try {
+      const result = await api.preview(file, SAMPLE_SHOPIFY);
+      setRun(result);
+    } catch (err) {
+      toast({
+        title: "Preview failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
       setRunningPreview(false);
-      setPreviewDone(true);
-    }, 1800);
+    }
   }
-  function startSync() {
-    setSyncing(true);
-    setTimeout(() => {
-      setSyncing(false);
-      setSyncDone(true);
-    }, 2500);
+
+  function replaceItem(updated: RunItem) {
+    setRun((r) => (r ? { ...r, items: r.items.map((i) => (i.id === updated.id ? updated : i)) } : r));
   }
-  function updateItem(sku: string, field: "productName" | "quantity", value: string) {
-    setItems((arr) =>
-      arr.map((it) =>
-        it.sku === sku ? { ...it, [field]: field === "quantity" ? Number(value) : value } : it,
-      ),
-    );
+
+  async function act(fn: () => Promise<RunItem>) {
+    try {
+      replaceItem(await fn());
+    } catch (err) {
+      toast({
+        title: "Action failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
   }
-  function markFixed(sku: string) {
-    setItems((arr) => arr.map((it) => (it.sku === sku ? { ...it, fixed: true } : it)));
+
+  async function startSync() {
+    if (!run) return;
+    setCommitting(true);
+    try {
+      const committed = await api.commit(run.id);
+      setRun(committed);
+    } catch (err) {
+      toast({
+        title: "Sync failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setCommitting(false);
+    }
   }
+
+  const syncDone = run?.status === "committed" || run?.status === "failed";
+
   function canProceed() {
-    if (step === 1) return !!fileName;
+    if (step === 1) return !!file;
     if (step === 2) return shopifyFetched;
-    if (step === 3) return previewDone;
+    if (step === 3) return !!run;
     return true;
   }
   function next() {
@@ -114,6 +154,12 @@ export function NewSync() {
   }
   function back() {
     if (step > 1) setStep((s) => s - 1);
+  }
+  function reset() {
+    setStep(1);
+    setFile(null);
+    setShopifyFetched(false);
+    setRun(null);
   }
 
   return (
@@ -171,7 +217,7 @@ export function NewSync() {
                     <div>
                       <h3 className="font-semibold text-foreground">Upload Excel File</h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Select your inventory spreadsheet (.xlsx, .xls, .csv)
+                        Columns are read using your saved mapping (default: sku / name / quantity)
                       </p>
                     </div>
                   </div>
@@ -181,32 +227,31 @@ export function NewSync() {
                     data-testid="upload-dropzone"
                   >
                     <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-                    {fileName ? (
+                    {file ? (
                       <>
-                        <p className="text-sm font-semibold text-foreground">{fileName}</p>
+                        <p className="text-sm font-semibold text-foreground">{file.name}</p>
                         <p className="text-xs text-emerald-600 mt-1">File ready — click Next to continue</p>
                       </>
                     ) : (
                       <>
                         <p className="text-sm font-medium text-foreground">Drop your file here or click to browse</p>
-                        <p className="text-xs text-muted-foreground mt-1">Supported: .xlsx, .xls, .csv</p>
+                        <p className="text-xs text-muted-foreground mt-1">Supported: .xlsx</p>
                       </>
                     )}
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept=".xlsx,.xls,.csv"
+                      accept=".xlsx"
                       className="hidden"
                       onChange={onFileChange}
                       data-testid="input-file-upload"
                     />
                   </div>
-                  {fileName && (
+                  {file && (
                     <div className="mt-4 flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
                       <CircleCheckBig className="w-3.5 h-3.5 flex-shrink-0" />
                       <span>
-                        Detected columns: <strong>SKU</strong>, <strong>Product Name</strong>,{" "}
-                        <strong>Quantity</strong>
+                        Reading offline stock; online stock will be combined from Shopify.
                       </span>
                     </div>
                   )}
@@ -224,7 +269,7 @@ export function NewSync() {
                     <div>
                       <h3 className="font-semibold text-foreground">Fetch Shopify Data</h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Pull your current Shopify product catalog
+                        Stage online stock (sample data until live OAuth pull is wired)
                       </p>
                     </div>
                   </div>
@@ -233,20 +278,28 @@ export function NewSync() {
                       <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md px-4 py-3">
                         <CircleCheckBig className="w-4 h-4 flex-shrink-0" />
                         <span>
-                          Successfully fetched <strong>1,390 products</strong> from your Shopify store
+                          Staged <strong>{SAMPLE_SHOPIFY.length} variants</strong> of online stock for matching.
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        {[
-                          ["Products fetched", "1,390"],
-                          ["Variants", "3,241"],
-                          ["Collections", "18"],
-                        ].map(([label, value]) => (
-                          <div key={label} className="bg-muted/40 rounded-md p-3 text-center border border-border">
-                            <p className="text-lg font-bold text-foreground">{value}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-                          </div>
-                        ))}
+                      <div className="overflow-x-auto rounded-lg border border-border">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-muted/40 border-b border-border">
+                              <th className="text-left px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">SKU</th>
+                              <th className="text-left px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">Title</th>
+                              <th className="text-right px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">Online Qty</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {SAMPLE_SHOPIFY.map((v) => (
+                              <tr key={v.sku}>
+                                <td className="px-3 py-2 font-mono text-muted-foreground">{v.sku}</td>
+                                <td className="px-3 py-2 text-foreground">{v.title}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{v.inventory_quantity}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   ) : (
@@ -263,9 +316,6 @@ export function NewSync() {
                           </>
                         )}
                       </Button>
-                      {fetchingShopify && (
-                        <p className="text-xs text-muted-foreground mt-4">Connecting to Shopify API...</p>
-                      )}
                     </div>
                   )}
                 </CardContent>
@@ -282,11 +332,11 @@ export function NewSync() {
                     <div>
                       <h3 className="font-semibold text-foreground">Run Preview</h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Dry run — no changes will be made to Shopify
+                        Real engine run — match by SKU, combine pools, quality gate. Writes nothing.
                       </p>
                     </div>
                   </div>
-                  {previewDone ? (
+                  {run ? (
                     <div className="space-y-4">
                       <div className="grid grid-cols-3 gap-3">
                         <PreviewStat label="Clean" value={cleanCount} color="emerald" icon={CircleCheckBig} />
@@ -299,40 +349,35 @@ export function NewSync() {
                             <tr className="bg-muted/40 border-b border-border">
                               <th className="text-left px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">SKU</th>
                               <th className="text-left px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">Product Name</th>
-                              <th className="text-right px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">Quantity</th>
+                              <th className="text-right px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">Combined Qty</th>
                               <th className="text-left px-3 py-2 text-muted-foreground font-semibold uppercase tracking-wider">Status</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {items.map((it) => (
-                              <tr
-                                key={it.sku}
-                                className={
-                                  it.status === "Error"
-                                    ? "bg-red-50/50"
-                                    : it.status === "Flagged"
-                                      ? "bg-amber-50/50"
-                                      : ""
-                                }
-                              >
-                                <td className="px-3 py-2 font-mono text-muted-foreground">{it.sku}</td>
-                                <td className="px-3 py-2 text-foreground">{it.productName}</td>
-                                <td className="px-3 py-2 text-right tabular-nums">{it.quantity}</td>
-                                <td className="px-3 py-2">
-                                  <span
-                                    className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold ${
-                                      it.status === "Clean"
-                                        ? "bg-emerald-100 text-emerald-700"
-                                        : it.status === "Flagged"
-                                          ? "bg-amber-100 text-amber-700"
-                                          : "bg-red-100 text-red-700"
-                                    }`}
-                                  >
-                                    {it.status}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
+                            {items.map((it) => {
+                              const sl = statusLabel(it.status);
+                              return (
+                                <tr
+                                  key={it.id}
+                                  className={
+                                    it.status === "flagged-hard"
+                                      ? "bg-red-50/50"
+                                      : it.status === "flagged-suspicious"
+                                        ? "bg-amber-50/50"
+                                        : ""
+                                  }
+                                >
+                                  <td className="px-3 py-2 font-mono text-muted-foreground">{it.sku || "—"}</td>
+                                  <td className="px-3 py-2 text-foreground">{it.name}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{it.combined_quantity ?? "—"}</td>
+                                  <td className="px-3 py-2">
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold ${sl.cls}`}>
+                                      {sl.text}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -343,7 +388,7 @@ export function NewSync() {
                         {runningPreview ? (
                           <>
                             <div className="w-4 h-4 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-                            Analyzing...
+                            Running engine...
                           </>
                         ) : (
                           <>
@@ -367,7 +412,7 @@ export function NewSync() {
                     <div>
                       <h3 className="font-semibold text-foreground">Review &amp; Fix</h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Edit flagged and error items before syncing
+                        Fixes are re-checked through the quality gate. Logged per sync.
                       </p>
                     </div>
                     <div className="ml-auto flex gap-2">
@@ -379,93 +424,29 @@ export function NewSync() {
                       </span>
                     </div>
                   </div>
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-muted/40 border-b border-border">
-                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">SKU</th>
-                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Product Name</th>
-                          <th className="text-right px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Qty (Excel)</th>
-                          <th className="text-right px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Qty (Shopify)</th>
-                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Issue</th>
-                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {items.map((it) => {
-                          const editable = (it.status === "Flagged" || it.status === "Error") && !it.fixed;
-                          return (
-                            <tr
-                              key={it.sku}
-                              className={
-                                it.fixed
-                                  ? "bg-emerald-50/40"
-                                  : it.status === "Error"
-                                    ? "bg-red-50/50"
-                                    : it.status === "Flagged"
-                                      ? "bg-amber-50/50"
-                                      : ""
-                              }
-                            >
-                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{it.sku}</td>
-                              <td className="px-3 py-2.5">
-                                {editable ? (
-                                  <Input
-                                    value={it.productName}
-                                    onChange={(e) => updateItem(it.sku, "productName", e.target.value)}
-                                    className="h-7 text-xs w-44"
-                                    data-testid={`input-name-${it.sku}`}
-                                  />
-                                ) : (
-                                  <span className="text-xs text-foreground">{it.productName}</span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2.5 text-right">
-                                {editable ? (
-                                  <Input
-                                    type="number"
-                                    value={it.quantity}
-                                    onChange={(e) => updateItem(it.sku, "quantity", e.target.value)}
-                                    className="h-7 text-xs w-20 text-right ml-auto"
-                                    data-testid={`input-qty-${it.sku}`}
-                                  />
-                                ) : (
-                                  <span
-                                    className={`text-xs tabular-nums ${it.quantity < 0 ? "text-red-600 font-semibold" : "text-foreground"}`}
-                                  >
-                                    {it.quantity}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2.5 text-right text-xs tabular-nums text-muted-foreground">
-                                {it.shopifyQty}
-                              </td>
-                              <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                                {it.issue ?? <span className="text-muted-foreground/40">—</span>}
-                              </td>
-                              <td className="px-3 py-2.5">
-                                {it.fixed ? (
-                                  <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-semibold">
-                                    <CircleCheckBig className="w-3 h-3" /> Fixed
-                                  </span>
-                                ) : editable ? (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-6 text-xs px-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                                    onClick={() => markFixed(it.sku)}
-                                    data-testid={`button-fix-${it.sku}`}
-                                  >
-                                    Mark as Fixed
-                                  </Button>
-                                ) : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  {unresolvedFlags.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      Nothing to review — all items are clean or already resolved.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border border-border">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-muted/40 border-b border-border">
+                            <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">SKU</th>
+                            <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Reason</th>
+                            <th className="text-right px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">New Qty</th>
+                            <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {unresolvedFlags.map((it) => (
+                            <FlaggedRow key={it.id} runId={run!.id} item={it} onAct={act} />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -474,49 +455,35 @@ export function NewSync() {
               <Card className="border border-border shadow-none">
                 <CardContent className="p-8 text-center">
                   {syncDone ? (
-                    <motion.div
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      className="space-y-5"
-                    >
+                    <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="space-y-5">
                       <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
                         <CircleCheckBig className="w-8 h-8 text-emerald-500" />
                       </div>
                       <div>
                         <h3 className="text-lg font-bold text-foreground">Sync Complete</h3>
                         <p className="text-sm text-muted-foreground mt-1">
-                          Run ID: <span className="font-mono font-semibold">SYNC-9822</span>
+                          Run ID: <span className="font-mono font-semibold">{run?.run_id}</span>
                         </p>
                       </div>
                       <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto">
                         <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3">
-                          <p className="text-xl font-bold text-emerald-600">{cleanCount}</p>
+                          <p className="text-xl font-bold text-emerald-600">{run?.summary.synced ?? 0}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">Synced</p>
                         </div>
                         <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
-                          <p className="text-xl font-bold text-amber-600">0</p>
+                          <p className="text-xl font-bold text-amber-600">{run?.summary.flagged ?? 0}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">Flagged</p>
                         </div>
                         <div className="bg-red-50 border border-red-100 rounded-lg p-3">
-                          <p className="text-xl font-bold text-red-600">0</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">Errors</p>
+                          <p className="text-xl font-bold text-red-600">{run?.summary.failed ?? 0}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Failed</p>
                         </div>
                       </div>
                       <div className="flex justify-center gap-3 pt-2">
-                        <Button variant="outline" size="sm" onClick={() => navigate("/history")} data-testid="button-view-run">
+                        <Button variant="outline" size="sm" onClick={() => navigate(`/history?run=${run?.id}`)} data-testid="button-view-run">
                           View Run Details
                         </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setStep(1);
-                            setFileName(null);
-                            setShopifyFetched(false);
-                            setPreviewDone(false);
-                            setSyncDone(false);
-                          }}
-                          data-testid="button-new-run"
-                        >
+                        <Button size="sm" onClick={reset} data-testid="button-new-run">
                           Start Another Sync
                         </Button>
                       </div>
@@ -528,10 +495,10 @@ export function NewSync() {
                       </div>
                       <div>
                         <h3 className="font-semibold text-foreground">
-                          Ready to sync {items.length} products to Shopify
+                          Push {cleanCount + items.filter((i) => i.status === "fixed" || i.status === "approved").length} ready items to the destination
                         </h3>
                         <p className="text-xs text-muted-foreground mt-1">
-                          This will update live inventory. This action cannot be undone.
+                          Clean, fixed, and approved items are pushed (idempotent). Re-running never duplicates.
                         </p>
                       </div>
                       <div className="flex justify-center gap-2 text-xs text-muted-foreground">
@@ -541,8 +508,8 @@ export function NewSync() {
                         <span>·</span>
                         <span className="text-red-600 font-semibold">{errorCount} errors</span>
                       </div>
-                      <Button size="lg" onClick={startSync} disabled={syncing} className="gap-2" data-testid="button-start-sync">
-                        {syncing ? (
+                      <Button size="lg" onClick={startSync} disabled={committing || !run} className="gap-2" data-testid="button-start-sync">
+                        {committing ? (
                           <>
                             <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                             Syncing...
@@ -575,6 +542,65 @@ export function NewSync() {
         )}
       </div>
     </Layout>
+  );
+}
+
+function FlaggedRow({
+  runId,
+  item,
+  onAct,
+}: {
+  runId: number;
+  item: RunItem;
+  onAct: (fn: () => Promise<RunItem>) => void;
+}) {
+  const [qty, setQty] = useState<string>(String(item.combined_quantity ?? 0));
+  const isHard = item.status === "flagged-hard";
+  return (
+    <tr className={isHard ? "bg-red-50/50" : "bg-amber-50/50"}>
+      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{item.sku || "no SKU"}</td>
+      <td className="px-3 py-2.5 text-xs text-amber-700">{item.flag_reason}</td>
+      <td className="px-3 py-2.5 text-right">
+        <Input
+          type="number"
+          value={qty}
+          onChange={(e) => setQty(e.target.value)}
+          className="h-7 text-xs w-20 text-right ml-auto"
+          data-testid={`input-qty-${item.sku}`}
+        />
+      </td>
+      <td className="px-3 py-2.5 whitespace-nowrap">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 text-xs px-2"
+          onClick={() => onAct(() => api.fixItem(runId, item.id, Number(qty)))}
+          data-testid={`button-fix-${item.sku}`}
+        >
+          Fix
+        </Button>{" "}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 text-xs px-2"
+          disabled={isHard}
+          title={isHard ? "Hard errors must be fixed or skipped" : ""}
+          onClick={() => onAct(() => api.approveItem(runId, item.id))}
+          data-testid={`button-approve-${item.sku}`}
+        >
+          Approve
+        </Button>{" "}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 text-xs px-2 border-red-300 text-red-600 hover:bg-red-50"
+          onClick={() => onAct(() => api.skipItem(runId, item.id))}
+          data-testid={`button-skip-${item.sku}`}
+        >
+          Skip
+        </Button>
+      </td>
+    </tr>
   );
 }
 
