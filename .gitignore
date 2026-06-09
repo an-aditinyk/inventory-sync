@@ -1,0 +1,18 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+*.db
+backend/inventory_sync.db
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.tsbuild/
+
+# Env / secrets
+.env
+*.local
+
+# OS
+.DS_Store
